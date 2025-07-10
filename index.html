@@ -19,7 +19,6 @@
 
   <h1>Web NFC: Clone & Create</h1>
   
-  <!-- === SCANNING SECTION === -->
   <div id="scanner-section">
       <button id="scanButton">1. Scan Tag</button>
       <div id="saveControls" style="display: none;">
@@ -36,7 +35,6 @@
 
   <hr>
 
-  <!-- === WRITING SECTION === -->
   <div id="writer-section">
     <h2>Create a New Simple Tag</h2>
     <p>Use this for writing new text or URL data from scratch.</p>
@@ -51,7 +49,6 @@
 
   <hr>
 
-  <!-- === SAVED DATA SECTION === -->
   <h2>Saved Scans <button id="clearButton" style="font-size: 0.8em; float: right;">Clear Saved</button></h2>
   <div id="saved-scans">
     <p>No scans saved yet.</p>
@@ -80,19 +77,34 @@
         .join('-');
     }
 
-    // --- CLONE TAG FUNCTION ---
+    // --- CLONE TAG FUNCTION (CORRECTED) ---
     async function cloneTag(scanData) {
         statusSpan.textContent = 'Preparing to clone...';
         errorDiv.textContent = '';
         
-        // Reconstruct the NDEF message for writing.
-        // The saved `data` is an array of numbers, so we convert it back to a Uint8Array.
-        const messageToWrite = {
-            records: scanData.records.map(record => ({
-                ...record, // Copies recordType, mediaType, etc.
-                data: new Uint8Array(record.data)
-            }))
-        };
+        // ** THE FIX IS HERE **
+        // Create a valid array of NDEFRecordInit objects.
+        // We manually construct each record to ensure it's valid.
+        const recordsToWrite = scanData.records.map(savedRecord => {
+            const recordInit = {
+                recordType: savedRecord.recordType,
+                data: new Uint8Array(savedRecord.data)
+            };
+
+            // Only add mediaType if the recordType is 'mime'.
+            if (savedRecord.recordType === 'mime') {
+                recordInit.mediaType = savedRecord.mediaType;
+            }
+
+            // Also handle other optional properties like 'id'.
+            if (savedRecord.id) {
+                recordInit.id = savedRecord.id;
+            }
+            
+            return recordInit;
+        });
+
+        const messageToWrite = { records: recordsToWrite };
 
         try {
             const ndef = new NDEFReader();
@@ -191,13 +203,18 @@
           const rawRecords = [];
 
           for (const record of message.records) {
+            html += `<b>ID:</b> ${record.id || 'N/A'}<br>`;
             html += `<b>Record Type:</b> ${record.recordType}<br>`;
             html += `<b>MIME Type:</b> ${record.mediaType || 'N/A'}<br>`;
+            
+            // Save a clean version of the record for cloning.
             rawRecords.push({
+                id: record.id,
                 recordType: record.recordType,
                 mediaType: record.mediaType,
                 data: Array.from(new Uint8Array(record.data))
             });
+
             if (record.recordType === 'text') {
               html += `<b>Data:</b> ${new TextDecoder(record.encoding).decode(record.data)}<br>`;
             } else if (record.recordType === 'url') {
