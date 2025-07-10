@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <title>Full NFC Read/Write/Save App</title>
+  <title>NFC Clone & Create App</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; }
@@ -17,7 +17,7 @@
 </head>
 <body>
 
-  <h1>Web NFC Read, Write & Save</h1>
+  <h1>Web NFC: Clone & Create</h1>
   
   <!-- === SCANNING SECTION === -->
   <div id="scanner-section">
@@ -38,15 +38,15 @@
 
   <!-- === WRITING SECTION === -->
   <div id="writer-section">
-    <h2>Write to a Tag</h2>
-    <p>Enter the data you want to write below, select the record type, and click 'Write'.</p>
-    <textarea id="dataToWrite" placeholder="Enter text or a full URL (e.g., https://google.com)"></textarea><br>
+    <h2>Create a New Simple Tag</h2>
+    <p>Use this for writing new text or URL data from scratch.</p>
+    <textarea id="dataToCreate" placeholder="Enter text or a full URL (e.g., https://google.com)"></textarea><br>
     <label for="recordType">Record Type:</label>
     <select id="recordType">
       <option value="text" selected>Text</option>
       <option value="url">URL</option>
     </select>
-    <button id="writeButton">Write to Tag</button>
+    <button id="createButton">Create and Write Tag</button>
   </div>
 
   <hr>
@@ -58,16 +58,17 @@
   </div>
 
   <script>
+    // --- DOM ELEMENT REFERENCES ---
     const scanButton = document.getElementById('scanButton');
     const saveButton = document.getElementById('saveButton');
-    const writeButton = document.getElementById('writeButton');
+    const createButton = document.getElementById('createButton');
     const clearButton = document.getElementById('clearButton');
     const saveControls = document.getElementById('saveControls');
     const statusSpan = document.getElementById('status');
     const outputDiv = document.getElementById('output');
     const errorDiv = document.getElementById('error');
     const savedScansDiv = document.getElementById('saved-scans');
-    const dataToWriteText = document.getElementById('dataToWrite');
+    const dataToCreateText = document.getElementById('dataToCreate');
     const recordTypeSelect = document.getElementById('recordType');
 
     let lastScanResult = null;
@@ -79,6 +80,30 @@
         .join('-');
     }
 
+    // --- CLONE TAG FUNCTION ---
+    async function cloneTag(scanData) {
+        statusSpan.textContent = 'Preparing to clone...';
+        errorDiv.textContent = '';
+        
+        // Reconstruct the NDEF message for writing.
+        // The saved `data` is an array of numbers, so we convert it back to a Uint8Array.
+        const messageToWrite = {
+            records: scanData.records.map(record => ({
+                ...record, // Copies recordType, mediaType, etc.
+                data: new Uint8Array(record.data)
+            }))
+        };
+
+        try {
+            const ndef = new NDEFReader();
+            await ndef.write(messageToWrite);
+            statusSpan.textContent = 'Clone successful! New tag has been written.';
+        } catch (error) {
+            statusSpan.textContent = 'Clone failed!';
+            errorDiv.textContent = 'Error: ' + error;
+        }
+    }
+
     // --- RENDER SAVED SCANS ---
     function renderSavedScans() {
       const scans = JSON.parse(localStorage.getItem('nfcScans') || '[]');
@@ -88,38 +113,25 @@
         return;
       }
 
-      scans.forEach((scan, index) => {
+      scans.forEach((scan) => {
         const item = document.createElement('div');
         item.className = 'saved-item';
-        
-        let content = `<b>Saved:</b> ${new Date(scan.timestamp).toLocaleString()}<br>${scan.html}`;
-        item.innerHTML = content;
+        item.innerHTML = `<b>Saved:</b> ${new Date(scan.timestamp).toLocaleString()}<br>${scan.html}`;
 
-        // Add a "Load for Writing" button for each saved scan
-        const loadButton = document.createElement('button');
-        loadButton.textContent = 'Load for Writing';
-        loadButton.onclick = () => {
-          // Find the first decodable record (text or url) and load it
-          const firstRecord = scan.records.find(r => r.recordType === 'text' || r.recordType === 'url');
-          if (firstRecord) {
-              const decoder = new TextDecoder();
-              dataToWriteText.value = decoder.decode(new Uint8Array(firstRecord.data));
-              recordTypeSelect.value = firstRecord.recordType;
-              window.scrollTo(0, writer-section.offsetTop); // Scroll to writer
-          } else {
-              alert("This saved scan does not contain simple text/URL data to load.");
-          }
-        };
-        item.appendChild(loadButton);
+        const cloneBtn = document.createElement('button');
+        cloneBtn.textContent = 'Clone This Tag';
+        cloneBtn.onclick = () => cloneTag(scan);
+
+        item.appendChild(cloneBtn);
         savedScansDiv.appendChild(item);
       });
     }
 
-    // --- SAVE & CLEAR LOGIC ---
+    // --- BUTTON EVENT LISTENERS ---
     saveButton.addEventListener('click', () => {
       if (lastScanResult) {
         const scans = JSON.parse(localStorage.getItem('nfcScans') || '[]');
-        scans.unshift(lastScanResult); // Add to top
+        scans.unshift(lastScanResult);
         localStorage.setItem('nfcScans', JSON.stringify(scans));
         renderSavedScans();
         statusSpan.textContent = 'Scan saved!';
@@ -133,20 +145,16 @@
       }
     });
 
-    // --- NFC WRITE LOGIC ---
-    writeButton.addEventListener('click', async () => {
+    createButton.addEventListener('click', async () => {
         statusSpan.textContent = 'Preparing to write...';
         errorDiv.textContent = '';
-        const dataToWrite = dataToWriteText.value;
-
+        const dataToWrite = dataToCreateText.value;
         if (!dataToWrite) {
-            errorDiv.textContent = 'Error: Text box is empty. Nothing to write.';
+            errorDiv.textContent = 'Error: Text box is empty.';
             return;
         }
-
         try {
             const ndef = new NDEFReader();
-            // The message object must contain an array of records
             await ndef.write({
                 records: [{ recordType: recordTypeSelect.value, data: new TextEncoder().encode(dataToWrite) }]
             });
@@ -157,7 +165,6 @@
         }
     });
 
-    // --- NFC SCAN LOGIC ---
     scanButton.addEventListener('click', async () => {
       statusSpan.textContent = 'Requesting permission...';
       outputDiv.innerHTML = '';
@@ -181,27 +188,20 @@
           saveControls.style.display = 'block';
 
           let html = `> Serial Number: ${serialNumber}<br>> Records: (${message.records.length})<hr>`;
-          
-          // Store raw records for saving
           const rawRecords = [];
 
           for (const record of message.records) {
             html += `<b>Record Type:</b> ${record.recordType}<br>`;
             html += `<b>MIME Type:</b> ${record.mediaType || 'N/A'}<br>`;
-
-            // For saving, we store the raw data as an array of numbers
             rawRecords.push({
                 recordType: record.recordType,
                 mediaType: record.mediaType,
                 data: Array.from(new Uint8Array(record.data))
             });
-
             if (record.recordType === 'text') {
-              const decoder = new TextDecoder(record.encoding);
-              html += `<b>Data:</b> ${decoder.decode(record.data)}<br>`;
+              html += `<b>Data:</b> ${new TextDecoder(record.encoding).decode(record.data)}<br>`;
             } else if (record.recordType === 'url') {
-              const url = new TextDecoder().decode(record.data);
-              html += `<b>URL:</b> <a href="${url}" target="_blank">${url}</a><br>`;
+              html += `<b>URL:</b> <a href="${new TextDecoder().decode(record.data)}" target="_blank">${new TextDecoder().decode(record.data)}</a><br>`;
             } else {
               html += `<b>Raw Data (Hex):</b> ${toHexString(record.data)}<br>`;
             }
@@ -216,7 +216,6 @@
       }
     });
 
-    // Load saved scans on page start
     document.addEventListener('DOMContentLoaded', renderSavedScans);
   </script>
 
