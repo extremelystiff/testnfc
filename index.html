@@ -1,105 +1,223 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Robust NFC Reader</title>
+  <title>Full NFC Read/Write/Save App</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; }
-    #scanButton { font-size: 1.2em; padding: 10px; cursor: pointer; }
-    #output { margin-top: 20px; border: 1px solid #ccc; padding: 10px; min-height: 50px; word-wrap: break-word; }
+    button { font-size: 1em; padding: 10px; margin: 5px 2px; cursor: pointer; border-radius: 5px; border: 1px solid #777; }
+    #output, .saved-item, #writer-section { margin-top: 15px; border: 1px solid #ccc; padding: 10px; word-wrap: break-word; border-radius: 5px; }
+    #writer-section { background-color: #eef; }
+    .saved-item { background-color: #f9f9f9; }
     .log { color: #555; font-family: monospace; }
-    .error { color: red; }
+    .error { color: red; font-weight: bold; }
+    textarea { width: 95%; min-height: 60px; font-family: monospace; }
+    hr { border: 1px solid #eee; margin: 20px 0; }
   </style>
 </head>
 <body>
 
-  <h1>Web NFC Reader (Robust Version)</h1>
-  <p>Click the button, then tap an NFC tag. This version provides more detailed debugging information.</p>
-
-  <button id="scanButton">Scan NFC Tag</button>
-
-  <div class="log">
-    <p><b>Status:</b> <span id="status">Idle</span></p>
-    <p class="error" id="error"></p>
+  <h1>Web NFC Read, Write & Save</h1>
+  
+  <!-- === SCANNING SECTION === -->
+  <div id="scanner-section">
+      <button id="scanButton">1. Scan Tag</button>
+      <div id="saveControls" style="display: none;">
+          <button id="saveButton">2. Save Last Scan</button>
+      </div>
   </div>
 
-  <div id="output">
-    <p>Scan results will appear here.</p>
+  <div class="log">
+    <p><b>Status:</b> <span id="status">Idle. Click 'Scan' to begin.</span></p>
+    <p class="error" id="error"></p>
+  </div>
+  
+  <div id="output"><p>Scan results appear here.</p></div>
+
+  <hr>
+
+  <!-- === WRITING SECTION === -->
+  <div id="writer-section">
+    <h2>Write to a Tag</h2>
+    <p>Enter the data you want to write below, select the record type, and click 'Write'.</p>
+    <textarea id="dataToWrite" placeholder="Enter text or a full URL (e.g., https://google.com)"></textarea><br>
+    <label for="recordType">Record Type:</label>
+    <select id="recordType">
+      <option value="text" selected>Text</option>
+      <option value="url">URL</option>
+    </select>
+    <button id="writeButton">Write to Tag</button>
+  </div>
+
+  <hr>
+
+  <!-- === SAVED DATA SECTION === -->
+  <h2>Saved Scans <button id="clearButton" style="font-size: 0.8em; float: right;">Clear Saved</button></h2>
+  <div id="saved-scans">
+    <p>No scans saved yet.</p>
   </div>
 
   <script>
-    document.getElementById('scanButton').addEventListener('click', async () => {
-      const statusSpan = document.getElementById('status');
-      const outputDiv = document.getElementById('output');
-      const errorDiv = document.getElementById('error');
+    const scanButton = document.getElementById('scanButton');
+    const saveButton = document.getElementById('saveButton');
+    const writeButton = document.getElementById('writeButton');
+    const clearButton = document.getElementById('clearButton');
+    const saveControls = document.getElementById('saveControls');
+    const statusSpan = document.getElementById('status');
+    const outputDiv = document.getElementById('output');
+    const errorDiv = document.getElementById('error');
+    const savedScansDiv = document.getElementById('saved-scans');
+    const dataToWriteText = document.getElementById('dataToWrite');
+    const recordTypeSelect = document.getElementById('recordType');
 
-      // Clear previous results
-      statusSpan.textContent = 'Waiting for permission...';
+    let lastScanResult = null;
+
+    // --- UTILITY: ArrayBuffer to Hex String ---
+    function toHexString(buffer) {
+      return Array.from(new Uint8Array(buffer))
+        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+        .join('-');
+    }
+
+    // --- RENDER SAVED SCANS ---
+    function renderSavedScans() {
+      const scans = JSON.parse(localStorage.getItem('nfcScans') || '[]');
+      savedScansDiv.innerHTML = '';
+      if (scans.length === 0) {
+        savedScansDiv.innerHTML = '<p>No scans saved yet.</p>';
+        return;
+      }
+
+      scans.forEach((scan, index) => {
+        const item = document.createElement('div');
+        item.className = 'saved-item';
+        
+        let content = `<b>Saved:</b> ${new Date(scan.timestamp).toLocaleString()}<br>${scan.html}`;
+        item.innerHTML = content;
+
+        // Add a "Load for Writing" button for each saved scan
+        const loadButton = document.createElement('button');
+        loadButton.textContent = 'Load for Writing';
+        loadButton.onclick = () => {
+          // Find the first decodable record (text or url) and load it
+          const firstRecord = scan.records.find(r => r.recordType === 'text' || r.recordType === 'url');
+          if (firstRecord) {
+              const decoder = new TextDecoder();
+              dataToWriteText.value = decoder.decode(new Uint8Array(firstRecord.data));
+              recordTypeSelect.value = firstRecord.recordType;
+              window.scrollTo(0, writer-section.offsetTop); // Scroll to writer
+          } else {
+              alert("This saved scan does not contain simple text/URL data to load.");
+          }
+        };
+        item.appendChild(loadButton);
+        savedScansDiv.appendChild(item);
+      });
+    }
+
+    // --- SAVE & CLEAR LOGIC ---
+    saveButton.addEventListener('click', () => {
+      if (lastScanResult) {
+        const scans = JSON.parse(localStorage.getItem('nfcScans') || '[]');
+        scans.unshift(lastScanResult); // Add to top
+        localStorage.setItem('nfcScans', JSON.stringify(scans));
+        renderSavedScans();
+        statusSpan.textContent = 'Scan saved!';
+      }
+    });
+
+    clearButton.addEventListener('click', () => {
+      if(confirm('Are you sure you want to clear all saved scans?')) {
+        localStorage.removeItem('nfcScans');
+        renderSavedScans();
+      }
+    });
+
+    // --- NFC WRITE LOGIC ---
+    writeButton.addEventListener('click', async () => {
+        statusSpan.textContent = 'Preparing to write...';
+        errorDiv.textContent = '';
+        const dataToWrite = dataToWriteText.value;
+
+        if (!dataToWrite) {
+            errorDiv.textContent = 'Error: Text box is empty. Nothing to write.';
+            return;
+        }
+
+        try {
+            const ndef = new NDEFReader();
+            // The message object must contain an array of records
+            await ndef.write({
+                records: [{ recordType: recordTypeSelect.value, data: new TextEncoder().encode(dataToWrite) }]
+            });
+            statusSpan.textContent = 'Write successful!';
+        } catch (error) {
+            statusSpan.textContent = 'Write failed!';
+            errorDiv.textContent = 'Error: ' + error;
+        }
+    });
+
+    // --- NFC SCAN LOGIC ---
+    scanButton.addEventListener('click', async () => {
+      statusSpan.textContent = 'Requesting permission...';
       outputDiv.innerHTML = '';
       errorDiv.textContent = '';
+      saveControls.style.display = 'none';
 
       if (!('NDEFReader' in window)) {
         errorDiv.textContent = "Web NFC is not supported on this browser.";
-        statusSpan.textContent = "Error!";
         return;
       }
 
       try {
         const ndef = new NDEFReader();
-        // The abort controller allows us to cancel the scan if needed.
-        const controller = new AbortController();
-        await ndef.scan({ signal: controller.signal });
-        
-        statusSpan.textContent = "Scan started. Bring tag near device...";
+        await ndef.scan();
+        statusSpan.textContent = "Scan started. Bring a tag near your device...";
 
-        ndef.addEventListener("readingerror", (event) => {
-          statusSpan.textContent = "Error reading tag!";
-          errorDiv.textContent = "An error occurred while reading the tag. Please try again.";
-          console.error("NFC Reading Error:", event);
-        });
+        ndef.addEventListener("readingerror", () => { statusSpan.textContent = "Error reading tag!"; });
 
         ndef.addEventListener("reading", ({ message, serialNumber }) => {
           statusSpan.textContent = "Tag read successfully!";
-          let outputHtml = `> Serial Number: ${serialNumber}<br>`;
-          outputHtml += `> Records: (${message.records.length})<br><hr>`;
+          saveControls.style.display = 'block';
 
-          console.log("Full NDEF Message:", message); // Log the whole message for debugging
+          let html = `> Serial Number: ${serialNumber}<br>> Records: (${message.records.length})<hr>`;
+          
+          // Store raw records for saving
+          const rawRecords = [];
 
-          if (message.records.length === 0) {
-              outputHtml += "<p>Tag is NDEF formatted, but contains no records.</p>";
-          }
-
-          const decoder = new TextDecoder();
           for (const record of message.records) {
-              outputHtml += `<b>Record Type:</b> ${record.recordType}<br>`;
-              outputHtml += `<b>MIME Type:</b> ${record.mediaType || 'N/A'}<br>`;
-              
-              try {
-                // Check if the record type is text
-                if (record.recordType === 'text') {
-                    outputHtml += `<b>Data:</b> ${decoder.decode(record.data)}<br>`;
-                } else if (record.recordType === 'url') {
-                    const url = decoder.decode(record.data);
-                    outputHtml += `<b>URL:</b> <a href="${url}" target="_blank">${url}</a><br>`;
-                } else {
-                    // For other types, just show it's non-text data
-                    outputHtml += `<b>Data:</b> [Non-text data, see console for details]<br>`;
-                    console.log("Non-text record data:", record.data);
-                }
-              } catch (e) {
-                  outputHtml += `<b>Data:</b> [Error decoding record: ${e}]<br>`;
-              }
-              outputHtml += `<hr>`;
-          }
-          outputDiv.innerHTML = outputHtml;
-        });
+            html += `<b>Record Type:</b> ${record.recordType}<br>`;
+            html += `<b>MIME Type:</b> ${record.mediaType || 'N/A'}<br>`;
 
+            // For saving, we store the raw data as an array of numbers
+            rawRecords.push({
+                recordType: record.recordType,
+                mediaType: record.mediaType,
+                data: Array.from(new Uint8Array(record.data))
+            });
+
+            if (record.recordType === 'text') {
+              const decoder = new TextDecoder(record.encoding);
+              html += `<b>Data:</b> ${decoder.decode(record.data)}<br>`;
+            } else if (record.recordType === 'url') {
+              const url = new TextDecoder().decode(record.data);
+              html += `<b>URL:</b> <a href="${url}" target="_blank">${url}</a><br>`;
+            } else {
+              html += `<b>Raw Data (Hex):</b> ${toHexString(record.data)}<br>`;
+            }
+            html += `<hr>`;
+          }
+          outputDiv.innerHTML = html;
+          lastScanResult = { html: html, timestamp: new Date().getTime(), records: rawRecords };
+        });
       } catch (error) {
         statusSpan.textContent = "Scan failed!";
         errorDiv.textContent = "Error: " + error;
-        console.error("NFC Scan Error:", error);
       }
     });
+
+    // Load saved scans on page start
+    document.addEventListener('DOMContentLoaded', renderSavedScans);
   </script>
 
 </body>
