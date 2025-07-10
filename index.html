@@ -1,61 +1,103 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Simple NFC Reader</title>
+  <title>Robust NFC Reader</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; }
     #scanButton { font-size: 1.2em; padding: 10px; cursor: pointer; }
-    #output { margin-top: 20px; border: 1px solid #ccc; padding: 10px; min-height: 50px; }
+    #output { margin-top: 20px; border: 1px solid #ccc; padding: 10px; min-height: 50px; word-wrap: break-word; }
+    .log { color: #555; font-family: monospace; }
     .error { color: red; }
   </style>
 </head>
 <body>
 
-  <h1>Web NFC Reader</h1>
-  <p>Click the button below and then tap an NFC tag on the back of your Android phone.</p>
+  <h1>Web NFC Reader (Robust Version)</h1>
+  <p>Click the button, then tap an NFC tag. This version provides more detailed debugging information.</p>
 
   <button id="scanButton">Scan NFC Tag</button>
-  <div id="output">
-    <p>Waiting for scan...</p>
+
+  <div class="log">
+    <p><b>Status:</b> <span id="status">Idle</span></p>
+    <p class="error" id="error"></p>
   </div>
-  <div id="error" class="error"></div>
+
+  <div id="output">
+    <p>Scan results will appear here.</p>
+  </div>
 
   <script>
     document.getElementById('scanButton').addEventListener('click', async () => {
-      const output = document.getElementById('output');
+      const statusSpan = document.getElementById('status');
+      const outputDiv = document.getElementById('output');
       const errorDiv = document.getElementById('error');
-      output.innerHTML = '<p>Waiting for scan...</p>';
+
+      // Clear previous results
+      statusSpan.textContent = 'Waiting for permission...';
+      outputDiv.innerHTML = '';
       errorDiv.textContent = '';
 
-      if ('NDEFReader' in window) {
-        try {
-          const ndef = new NDEFReader();
-          await ndef.scan();
-          output.innerHTML = "<p>Bring an NFC tag close to your device...</p>";
-
-          ndef.addEventListener("reading", ({ message, serialNumber }) => {
-            let outputHtml = `> Serial Number: ${serialNumber}<br>`;
-            outputHtml += `> Records: (${message.records.length})<br><br>`;
-
-            const decoder = new TextDecoder();
-            for (const record of message.records) {
-              outputHtml += `<b>Record Type:</b> ${record.recordType}<br>`;
-              outputHtml += `<b>MIME Type:</b> ${record.mediaType}<br>`;
-              // Assuming the data is text
-              outputHtml += `<b>Data:</b> ${decoder.decode(record.data)}<br><hr>`;
-            }
-            output.innerHTML = outputHtml;
-          });
-
-          ndef.addEventListener("readingerror", () => {
-            errorDiv.textContent = "Error reading NFC tag.";
-          });
-        } catch (error) {
-          errorDiv.textContent = "NFC Scan failed: " + error;
-        }
-      } else {
+      if (!('NDEFReader' in window)) {
         errorDiv.textContent = "Web NFC is not supported on this browser.";
+        statusSpan.textContent = "Error!";
+        return;
+      }
+
+      try {
+        const ndef = new NDEFReader();
+        // The abort controller allows us to cancel the scan if needed.
+        const controller = new AbortController();
+        await ndef.scan({ signal: controller.signal });
+        
+        statusSpan.textContent = "Scan started. Bring tag near device...";
+
+        ndef.addEventListener("readingerror", (event) => {
+          statusSpan.textContent = "Error reading tag!";
+          errorDiv.textContent = "An error occurred while reading the tag. Please try again.";
+          console.error("NFC Reading Error:", event);
+        });
+
+        ndef.addEventListener("reading", ({ message, serialNumber }) => {
+          statusSpan.textContent = "Tag read successfully!";
+          let outputHtml = `> Serial Number: ${serialNumber}<br>`;
+          outputHtml += `> Records: (${message.records.length})<br><hr>`;
+
+          console.log("Full NDEF Message:", message); // Log the whole message for debugging
+
+          if (message.records.length === 0) {
+              outputHtml += "<p>Tag is NDEF formatted, but contains no records.</p>";
+          }
+
+          const decoder = new TextDecoder();
+          for (const record of message.records) {
+              outputHtml += `<b>Record Type:</b> ${record.recordType}<br>`;
+              outputHtml += `<b>MIME Type:</b> ${record.mediaType || 'N/A'}<br>`;
+              
+              try {
+                // Check if the record type is text
+                if (record.recordType === 'text') {
+                    outputHtml += `<b>Data:</b> ${decoder.decode(record.data)}<br>`;
+                } else if (record.recordType === 'url') {
+                    const url = decoder.decode(record.data);
+                    outputHtml += `<b>URL:</b> <a href="${url}" target="_blank">${url}</a><br>`;
+                } else {
+                    // For other types, just show it's non-text data
+                    outputHtml += `<b>Data:</b> [Non-text data, see console for details]<br>`;
+                    console.log("Non-text record data:", record.data);
+                }
+              } catch (e) {
+                  outputHtml += `<b>Data:</b> [Error decoding record: ${e}]<br>`;
+              }
+              outputHtml += `<hr>`;
+          }
+          outputDiv.innerHTML = outputHtml;
+        });
+
+      } catch (error) {
+        statusSpan.textContent = "Scan failed!";
+        errorDiv.textContent = "Error: " + error;
+        console.error("NFC Scan Error:", error);
       }
     });
   </script>
